@@ -1,7 +1,7 @@
+import answerer
 import json
 import string
 from threading import Thread
-import answerer
 
 def main(k=0, n=100):
     qdata = get_qdata()
@@ -27,8 +27,8 @@ def main(k=0, n=100):
         thread.join()
 
     print("Results: ")
-    print("Successes: " + str(sum(results)) + "/" + str(data_length - k))
-    print("Percent correct: " + str(float(sum(results))/(data_length - k)))
+    print("Successes: " + str(sum(results)) + "/" + str(n))
+    print("Percent correct: " + str(float(sum(results))/n))
     
 
 def get_qdata():

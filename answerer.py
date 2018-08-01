@@ -11,6 +11,12 @@ def get_links(query : str) -> list:
     soup = BeautifulSoup(page.content, features="html.parser")
     return [link["href"][7:] for link in soup.findAll("a") if link["href"][:7] == "/url?q="]
 
+def get_links_test(query: str) -> str:
+    page = requests.get("https://www.google.com/search?q="+query)
+    soup = BeautifulSoup(page.content, features="html.parser")
+    return soup.text
+    
+
 def get_mention_counts(links: list, phrases: list) -> str:
     all_valid_counts = []
     threads = []
@@ -56,9 +62,9 @@ def valid_phrases(choices: list) -> list:
     for phrase in choices:
         valids.append((phrase, phrase))
         if len(phrase.split()) > 1:
-            tokenized_phrase = nltk.pos_tag(nltk.word_tokenize(phrase), tagset='universal')
+            tokenized_phrase = nltk.pos_tag(nltk.word_tokenize(phrase))
             valids.extend([(token, phrase) for token, tag in tokenized_phrase
-                             if tag == 'NOUN' and token != phrase])
+                             if tag[:2] == 'NN' and token != phrase])
     return dict(valids)
 
  
@@ -69,20 +75,29 @@ def evaluate_results(list_of_counts: list):
     answer = list_of_counts[0][0][0]
     confidence = 0.0
 
-    total_count = sum([kv[1] for phrase_counts in list_of_counts for kv in phrase_counts])
+    phrase_counts = merge_counts(list_of_counts)
+
+    total_count = sum([kv[1] for kv in phrase_counts])
     if total_count == 0: 
         return (answer, confidence)
     
-    for phrase_counts in list_of_counts:
-        sorted_counts = sorted(phrase_counts, key=lambda kv: kv[1], reverse=True)
-        current_confidence = float(sorted_counts[0][1]) / total_count
-        for i in range(1, len(sorted_counts)):
-            current_confidence -= float(sorted_counts[i][1]) / total_count
-        if current_confidence > confidence:
-            confidence = current_confidence
-            answer = sorted_counts[0][0]
+    
+    sorted_counts = sorted(phrase_counts, key=lambda kv: kv[1], reverse=True)
+    current_confidence = float(sorted_counts[0][1]) / total_count
+    for i in range(1, len(sorted_counts)):
+        current_confidence -= float(sorted_counts[i][1]) / total_count
+    if current_confidence > confidence:
+        confidence = current_confidence
+        answer = sorted_counts[0][0]
 
     return (answer, confidence)
+
+def merge_counts(list_of_counts: list) -> list:
+    first_counts = dict(list_of_counts[0])
+    for counts in [list_of_counts[i] for i in range(1, len(list_of_counts))]:
+        for phrase, count in counts:
+            first_counts[phrase] += count
+    return first_counts.items()
 
 def run(question: str, choices: list, counts: list) -> str:
     links = get_links(question)
@@ -105,21 +120,32 @@ def answer(question : str, choices: list) -> str:
     
     clean_choices(choices)
 
-    #we should make a thread for each answer
-    normal_counts, modified_counts = [], []
-    normal_thread = threading.Thread(target=(lambda q,c,cs: run(q,c,cs)), args=(question, choices, normal_counts))
-    modified_thread = threading.Thread(target=(lambda q,c,cs: run(q,c,cs)),\
-                                       args=(add_choices_to_question(question, choices), choices, modified_counts))
-    normal_thread.start()
-    modified_thread.start()
-    normal_thread.join()
-    modified_thread.join()
+    threads = []
+    counts_list = [[] for i in range(len(choices) + 2)]
 
-    answer, confidence = evaluate_results([normal_counts, modified_counts])
+    normal_thread = threading.Thread(target=(lambda q,c,cs: run(q,c,cs)), args=(question, choices, counts_list[-1]))
+    all_choices_thread = threading.Thread(target=(lambda q,c,cs: run(q,c,cs)),\
+                                       args=(add_choices_to_question(question, choices), choices, counts_list[-2]))
+    threads.append(normal_thread)
+    threads.append(all_choices_thread)
+    for i in range(len(choices)):
+        thread = threading.Thread(target=(lambda q,c,cs: run(q,c,cs)), 
+            args=(add_choices_to_question(question, [choices[i]]), choices, counts_list[i]))
+        threads.append(thread)
+
+    
+    for thread in threads: thread.start()
+    for thread in threads: thread.join()
+
+
+    threads = []    
+
+    answer, confidence = evaluate_results(counts_list)
 
     print ("\n")
-    print ("Web scraping results: \n\t" + "Original pass: " + str(normal_counts) + "\n\tUpdated pass: " \
-               + str(modified_counts))
+    print ("Web scraping results:")
+    for i in range(len(counts_list)):
+        print("\tIteration " + str(i+1) + ": " + str(counts_list[i]))
     print ("Confidence: " + str(confidence) + " for result of " + answer)
     print ("Time elapsed: " + str(time.time() - start_time))
     return answer
