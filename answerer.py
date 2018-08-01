@@ -1,6 +1,7 @@
 import requests
 import threading
 import time
+import nltk
 from bs4 import BeautifulSoup
 
 SEARCH_TIME: float = 8.0
@@ -52,15 +53,19 @@ def count_phrase(link : str, phrase: str, phrase_counts : list):
 
 def valid_phrases(choices: list) -> list:
     valids = []
-    nouns = []
     for phrase in choices:
-        valids.append(phrase)
-        #tokenize phrase
-    return {choice:choice for choice in choices}
+        valids.append((phrase, phrase))
+        if len(phrase.split()) > 1:
+            tokenized_phrase = nltk.pos_tag(nltk.word_tokenize(phrase), tagset='universal')
+            valids.extend([(token, phrase) for token, tag in tokenized_phrase
+                             if tag == 'NOUN' and token != phrase])
+    return dict(valids)
 
  
 def evaluate_results(list_of_counts: list):
     #rough sketch
+    #we need to choose one with most hits overall
+    print(list_of_counts)
     answer = list_of_counts[0][0][0]
     confidence = 0.0
 
@@ -100,6 +105,7 @@ def answer(question : str, choices: list) -> str:
     
     clean_choices(choices)
 
+    #we should make a thread for each answer
     normal_counts, modified_counts = [], []
     normal_thread = threading.Thread(target=(lambda q,c,cs: run(q,c,cs)), args=(question, choices, normal_counts))
     modified_thread = threading.Thread(target=(lambda q,c,cs: run(q,c,cs)),\
