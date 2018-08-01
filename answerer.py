@@ -17,16 +17,16 @@ def get_links_test(query: str) -> str:
     return soup.text
     
 
-def get_mention_counts(links: list, phrases: list) -> str:
+def get_mention_counts(text: str, phrases: list) -> str:
     all_valid_counts = []
     threads = []
 
     phrases_to_search : dict = valid_phrases(phrases)
 
     for phrase in phrases_to_search.keys():
-        thread = threading.Thread(target=lambda links, phrase:\
-            all_valid_counts.append((phrase, search_in_text(links, phrase))),
-            args=(links, phrase))
+        thread = threading.Thread(target=lambda text, phrase:\
+            all_valid_counts.append((phrase, search_in_text(text, phrase))),
+            args=(text, phrase))
         thread.start()
         threads.append(thread)
     for thread in threads:
@@ -37,25 +37,8 @@ def get_mention_counts(links: list, phrases: list) -> str:
         mention_counts[phrases_to_search[x]] += count
     return mention_counts.items()
 
-def search_in_text(links: list, phrase: str) -> int:    
-    counts = []
-    search_threads = []
-    timeout_cap = SEARCH_TIME / len(links)
-    for link in links:
-        current_thread = threading.Thread(target=count_phrase, args=(link, phrase, counts))
-        current_thread.start()
-        search_threads.append(current_thread)
-    for thread in search_threads:
-        thread.join(timeout=timeout_cap)
-    return sum(counts)   
-    
-def count_phrase(link : str, phrase: str, phrase_counts : list):
-    try:
-        page = requests.get(link)
-        count = page.text.lower().count(phrase)
-        phrase_counts.append (count)
-    except:
-        pass
+def search_in_text(text: str, phrase: str) -> int:    
+    return text.lower().count(phrase)
 
 def valid_phrases(choices: list) -> list:
     valids = []
@@ -100,15 +83,21 @@ def merge_counts(list_of_counts: list) -> list:
     return first_counts.items()
 
 def run(question: str, choices: list, counts: list) -> str:
-    links = get_links(question)
-    counts.extend(get_mention_counts(links, choices))
+    text = get_links_test(question)
+    counts.extend(get_mention_counts(text, choices))
     
 def add_choices_to_question(question : str, choices: list) -> str:
+    first_time = True
     for choice in choices:
-        question += " " + choice
+        if first_time: 
+            question += " AND " + choice
+            first_time = False
+        else:
+            question += " OR " + choice 
+
         #deal with choice types that could be recognized under different circumstances
         if len(choice) > 0 and choice[-1] == 's': 
-            question += " " + choice[:-1]
+            question += " OR " + choice[:-1]
     return question
 
 def clean_choices(choices: list):
