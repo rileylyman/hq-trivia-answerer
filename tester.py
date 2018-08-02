@@ -1,4 +1,4 @@
-import answerer
+import trivia
 import json
 import string
 from threading import Thread
@@ -52,7 +52,8 @@ def get_qdata():
     return question_data
             
 def is_correct(question: str, answers: list, correct_answer: str) -> bool:
-    guess = answerer.answer(question, answers)
+    q = trivia.Question(question, answers)
+    guess = q.answer()
     print(guess == correct_answer)
     return guess == correct_answer
 
