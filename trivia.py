@@ -2,14 +2,15 @@ import nltk
 import time
 import json
 import requests
+from secrets import CX, API
 
 class Question(object):
 
     _url = 'https://www.googleapis.com/customsearch/v1'
-    _cx = '002313104020834777329:2bmwkz62jve'
-    _api = 'AIzaSyBK-i6QvcdYOCXlB7weYsIAX4-AAvxQmT4'
     _headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:20.0) Gecko/20100101 Firefox/20.0'}
-
+    _cx = CX
+    _api = API
+    
     def __init__(self, question: str, choices: list, autorun=False):
         self.question = question
         self.choices = self._clean(choices)
