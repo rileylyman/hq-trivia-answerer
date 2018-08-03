@@ -21,6 +21,8 @@ class Question(object):
         self.confidence: float = 0.0
         self.guess = choices[0]
 
+        self.guess_stats = {}
+
         self._iteration = 1
 
         self.links, self.splash_text = self._get_links()
@@ -53,11 +55,14 @@ class Question(object):
             print('shallow iteration')
         else:
             print('iteration', self._iteration, 'of', len(self.links) + 1)
-        print('confidence:', self.confidence)
+        print('current confidence:', self.pretty_confidence(), 'for guess of', self.guess)
         print('current duration:', time.time() - self.start_time)
-        print('============================= best guess:', self.guess)
+        print('============================= best guess (' + self.pretty_confidence() + ' confident):',
+                                                                                        self.true_guess())
 
     def _update_confidence(self):
+        self._save_current_stats()
+
         total_count = sum(self.choice_counts.values())
         if total_count > 0:
             sorted_counts = sorted(self.choice_counts.keys(), 
@@ -68,7 +73,13 @@ class Question(object):
                 current_confidence -= float(self.choice_counts[sorted_counts[i]]) / total_count 
 
             self.confidence = current_confidence
-            self.guess = sorted_counts[0]      
+            self.guess = sorted_counts[0] 
+
+    def _save_current_stats(self):
+        if (self.confidence in self.guess_stats.keys()):
+            self.guess_stats[self.confidence].append(self.guess)
+        else:
+            self.guess_stats[self.confidence] = [self.guess]
 
     def _get_links(self) -> tuple: # returns (list<links>, text)        
         page  = self._make_request(self._url, params=self._params())
@@ -110,3 +121,12 @@ class Question(object):
             'cx':self._cx,
             'key':self._api
         } 
+
+    def true_guess(self):
+        #kv[1] is the list of guesses
+        #for now just return the first in the list as defualt
+        #but it could be improved by seeing which one has the next highest confidence
+        return max(self.guess_stats.items(), key=lambda kv:kv[0])[1][0]
+
+    def pretty_confidence(self):
+        return str(int(self.confidence) * 100) + '%'
