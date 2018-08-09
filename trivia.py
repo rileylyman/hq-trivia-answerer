@@ -5,12 +5,15 @@ import requests
 from bs4 import BeautifulSoup
 from secrets import CX, API
 
+#remember to add in augmented questions
 class Question(object):
 
     _url = 'https://www.googleapis.com/customsearch/v1'
     _headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:20.0) Gecko/20100101 Firefox/20.0'}
     _cx = CX
     _api = API
+
+    RVF = 10
     
     def __init__(self, question: str, choices: list, autorun=False, nlp=None):
         self.start_time = time.time()
@@ -101,8 +104,16 @@ class Question(object):
 #Natural language processing
 
     def _assign_count(self, text: str, phrase: str) -> int:
-        #naive approach is -> return text.count(phrase) 
-        return text.count(phrase)
+        #naive approach: 
+        #return text.count(phrase)
+        sentences = nltk.sent_tokenize(text)
+        for sentence in sentences:
+            phrase_count = sentence.count(phrase)
+            if self.root_verb in sentence:
+                phrase_count *= self.RVF
+                #need to account if the verb is negated
+        return phrase_count
+
 
     def _get_root_verb(self, sentence: str) -> str:
         dependency_tree = self.stanford_nlp.dependency_parse(sentence)
