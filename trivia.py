@@ -29,7 +29,7 @@ class Question(object):
             self.stanford_nlp = nlp
 
         self.question = question
-        self.root_verb = self._get_root_verb(question)
+        self.root_verb, self.is_negated = self._get_root_verb(question)
         self.choices = self._clean_choices(choices)
         self.search_phrases: dict = self._to_search()
         self.choice_counts = dict( [ (choice, 0) for choice in choices ] )
@@ -56,6 +56,7 @@ class Question(object):
             self._analyze_link(link)
         if close:
             self.stanford_nlp.close()
+        print (self.choice_counts)
         return self.guess
 
     def _analyze_splash(self):
@@ -89,7 +90,7 @@ class Question(object):
         self._save_current_stats()
 
         total_count = sum(self.choice_counts.values())
-        if total_count > 0:
+        if total_count != 0:
             sorted_counts = sorted(self.choice_counts.keys(), 
                             key=lambda choice: self.choice_counts[choice], reverse=True)
 
@@ -103,43 +104,60 @@ class Question(object):
 ##################################################################################
 #Natural language processing
 
-    def _assign_count(self, text: str, phrase: str) -> int:
-        #naive approach: 
-        #return text.count(phrase)
+    def _assign_count(self, text: str, phrase: str) -> int:       
         sentences = nltk.sent_tokenize(text)
+        phrase_count = 0
+       
         for sentence in sentences:
-            phrase_count = sentence.count(phrase)
+            phrase_count += sentence.count(phrase)
             if self.root_verb in sentence:
                 phrase_count *= self.RVF
-                #need to account if the verb is negated
+        
+        if self.is_negated: phrase_count *= -1
         return phrase_count
 
 
     def _get_root_verb(self, sentence: str) -> str:
-        dependency_tree = self.stanford_nlp.dependency_parse(sentence)
-        i = 0
-        while dependency_tree[i][0] != 'ROOT':
-            i += 1
-            if i == len(dependency_tree): 
-                raise IndexError('No root node was found in dependency tree.')
-        root_node_pos = dependency_tree[i][2] - 1
-        root_verb = self.stanford_nlp.word_tokenize(sentence)[root_node_pos]
-        return root_verb 
+
+        root_verb, root_node_pos, dependency_tree = self._get_root_helper(sentence)
+
+        verb_negated = False
+        for node in dependency_tree:
+            if node[0] == 'neg' and node[1] == root_node_pos:
+                verb_negated = True
+                break
+        #Return the infinitive####################################
+        return (root_verb, verb_negated) 
 
     def _to_search(self) -> list: # returns search words associated with their phrase
         valids = []
         for phrase in self.choices:
             valids.append((phrase, phrase))
             if len(phrase.split()) > 1:
-                tokenized_phrase = nltk.pos_tag(nltk.word_tokenize(phrase))
-                valids.extend([(token, phrase) for token, tag in tokenized_phrase
-                                if tag[:2] == 'NN' and token != phrase])
+                #tokenized_phrase = nltk.pos_tag(nltk.word_tokenize(phrase))
+                #valids.extend([(token, phrase) for token, tag in tokenized_phrase
+                #                if tag[:2] == 'NN' and token != phrase])
+                root, _, _ = self._get_root_helper(phrase)
+                if root != phrase:
+                    valids.append((root, phrase))
         return dict(valids)
     
     def _modified_question(self) -> str:
         for choice in self.choices:
             question += ' ' + choice
         return question
+
+    def _get_root_helper(self, sentence) -> str:
+        dependency_tree = self.stanford_nlp.dependency_parse(sentence)
+        i = 0
+        while dependency_tree[i][0] != 'ROOT':
+            i += 1
+            if i == len(dependency_tree): 
+                raise IndexError('No root node was found in dependency tree.')
+        
+        root_node_pos = dependency_tree[i][2] #this is 1-index based
+        root_verb = self.stanford_nlp.word_tokenize(sentence)[root_node_pos-1]
+        return (root_verb, root_node_pos, dependency_tree)
 
 ##################################################################################
 #helper functions
