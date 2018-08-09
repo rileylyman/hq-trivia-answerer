@@ -10,6 +10,8 @@ def main(k=0, n=100):
     active_threads = []
     results = []
 
+    nlp = trivia.Question.create_nlp()
+
     while (k < data_length):
         #if len(active_threads) < 5:
         #    thread = Thread(target=(lambda question, answers, correct, results: 
@@ -19,7 +21,7 @@ def main(k=0, n=100):
         #    k += 1
         #    print("Progress: " + str(float(len(results))/data_length*100) \                                                                    + "%")
         #active_threads = [t for t in active_threads if t.is_alive()]
-        results.append(int(is_correct(qdata[k][0], qdata[k][1], qdata[k][2])))
+        results.append(int(is_correct(qdata[k][0], qdata[k][1], qdata[k][2], nlp)))
         k+=1
         print("Progress: " + str(float(len(results))/data_length*100))
 
@@ -51,9 +53,9 @@ def get_qdata():
             question_data.append((question, answers, correct_answer))
     return question_data
             
-def is_correct(question: str, answers: list, correct_answer: str) -> bool:
-    q = trivia.Question(question, answers)
-    guess = q.answer()
+def is_correct(question: str, answers: list, correct_answer: str, nlp) -> bool:
+    q = trivia.Question(question, answers, nlp=nlp)
+    guess = q.answer(close=False)
     print(guess == correct_answer)
     return guess == correct_answer
 

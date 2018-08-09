@@ -2,6 +2,7 @@ import nltk
 import time
 import json
 import requests
+from bs4 import BeautifulSoup
 from secrets import CX, API
 
 class Question(object):
@@ -11,13 +12,25 @@ class Question(object):
     _cx = CX
     _api = API
     
-    def __init__(self, question: str, choices: list, autorun=False):
+    def __init__(self, question: str, choices: list, autorun=False, nlp=None):
+        self.start_time = time.time()
+        
+        if not nlp:
+            #You should always remember to call nlp.close() if you call __init__ but 
+            #do not call self.answer(), otherwise, the nlp server will continue to run
+            #Also, not providing nlp will cause _get_root_verb to run too slowly the first
+            #time, so in practice nlp should always be instantiated and tested before
+            #using the answerer to ensure answers within the time limit
+            self.stanford_nlp = self.create_nlp()
+        else:
+            self.stanford_nlp = nlp
+
         self.question = question
-        self.choices = self._clean(choices)
+        self.root_verb = self._get_root_verb(question)
+        self.choices = self._clean_choices(choices)
         self.search_phrases: dict = self._to_search()
         self.choice_counts = dict( [ (choice, 0) for choice in choices ] )
 
-        self.start_time = time.time()
         self.confidence: float = 0.0
         self.guess = choices[0]
 
@@ -26,14 +39,20 @@ class Question(object):
         self._iteration = 1
 
         self.links, self.splash_text = self._get_links()
+        self.all_text = self.splash_text
         if autorun:
             self.answer()
 
-    def answer(self): # prints its best guess for multiple web scrapes
+#################################################################################
+#The main loop
+
+    def answer(self, close=True): # prints its best guess for multiple web scrapes
         self._analyze_splash()
         for link in self.links:
             self._iteration += 1
             self._analyze_link(link)
+        if close:
+            self.stanford_nlp.close()
         return self.guess
 
     def _analyze_splash(self):
@@ -41,13 +60,16 @@ class Question(object):
 
     def _analyze_link(self, link:str):
         page = self._make_request(link)
-        text = str(page.content)
+        text = self._get_text(page)
         self._analyze_text(text)
 
     def _analyze_text(self, text:str):
         for choice in self.search_phrases.keys():
-            self.choice_counts[self.search_phrases[choice]] += text.count(choice)
+            self.choice_counts[self.search_phrases[choice]] += self._assign_count(text, choice)
         self._evaluate()
+
+###################################################################################
+#Evaluation of search results
 
     def _evaluate(self):
         self._update_confidence()
@@ -55,10 +77,10 @@ class Question(object):
             print('shallow iteration')
         else:
             print('iteration', self._iteration, 'of', len(self.links) + 1)
-        print('current confidence:', self.pretty_confidence(), 'for guess of', self.guess)
+        print('current confidence:', self.pretty_confidence, 'for guess of', self.guess)
         print('current duration:', time.time() - self.start_time)
-        print('============================= best guess (' + self.pretty_confidence() + ' confident):',
-                                                                                        self.true_guess())
+        print('============================= best guess (' + self.pretty_confidence + ' confident):',
+            self.true_guess)
 
     def _update_confidence(self):
         self._save_current_stats()
@@ -74,6 +96,42 @@ class Question(object):
 
             self.confidence = current_confidence
             self.guess = sorted_counts[0] 
+
+##################################################################################
+#Natural language processing
+
+    def _assign_count(self, text: str, phrase: str) -> int:
+        #naive approach is -> return text.count(phrase) 
+        return text.count(phrase)
+
+    def _get_root_verb(self, sentence: str) -> str:
+        dependency_tree = self.stanford_nlp.dependency_parse(sentence)
+        i = 0
+        while dependency_tree[i][0] != 'ROOT':
+            i += 1
+            if i == len(dependency_tree): 
+                raise IndexError('No root node was found in dependency tree.')
+        root_node_pos = dependency_tree[i][2] - 1
+        root_verb = self.stanford_nlp.word_tokenize(sentence)[root_node_pos]
+        return root_verb 
+
+    def _to_search(self) -> list: # returns search words associated with their phrase
+        valids = []
+        for phrase in self.choices:
+            valids.append((phrase, phrase))
+            if len(phrase.split()) > 1:
+                tokenized_phrase = nltk.pos_tag(nltk.word_tokenize(phrase))
+                valids.extend([(token, phrase) for token, tag in tokenized_phrase
+                                if tag[:2] == 'NN' and token != phrase])
+        return dict(valids)
+    
+    def _modified_question(self) -> str:
+        for choice in self.choices:
+            question += ' ' + choice
+        return question
+
+##################################################################################
+#helper functions
 
     def _save_current_stats(self):
         if (self.confidence in self.guess_stats.keys()):
@@ -95,22 +153,16 @@ class Question(object):
     def _make_request(self, url:str, params:dict = {}):
         return requests.get(url, params=params, headers=self._headers)
 
-    def _to_search(self) -> list: # returns search words associated with their phrase
-        valids = []
-        for phrase in self.choices:
-            valids.append((phrase, phrase))
-            if len(phrase.split()) > 1:
-                tokenized_phrase = nltk.pos_tag(nltk.word_tokenize(phrase))
-                valids.extend([(token, phrase) for token, tag in tokenized_phrase
-                                if tag[:2] == 'NN' and token != phrase])
-        return dict(valids)
-    
-    def _modified_question(self) -> str:
-        for choice in self.choices:
-            question += ' ' + choice
-        return question
+    def _get_text(self, page):
+        soup = BeautifulSoup(page.content, features='html.parser')
+        if not soup: return ''
+        text = soup.get_text()
+        if not text: return ''
+        text.replace('\n', ' ')
+        self.all_text += text
+        return text
 
-    def _clean(self, choices: list) -> list:
+    def _clean_choices(self, choices: list) -> list:
         for i in range(len(choices)):
             choices[i] = choices[i].lower()
         return choices
@@ -121,12 +173,49 @@ class Question(object):
             'cx':self._cx,
             'key':self._api
         } 
+    
+    @staticmethod
+    def create_nlp():
+        #We dependency parse once because the first call always takes a while (reason unknown)
+        from stanfordcorenlp import StanfordCoreNLP
+        from secrets import SNLP_PATH
+        nlp =  StanfordCoreNLP(SNLP_PATH)
+        nlp.dependency_parse("This is a test sentence.")
+        return nlp
 
+##############################################################################
+#additional properties
+
+    @property
     def true_guess(self):
-        #kv[1] is the list of guesses
-        #for now just return the first in the list as defualt
-        #but it could be improved by seeing which one has the next highest confidence
-        return max(self.guess_stats.items(), key=lambda kv:kv[0])[1][0]
+        #for now just returns guess with most hits
+        return self.guess
 
+    @property
     def pretty_confidence(self):
-        return str(int(self.confidence) * 100) + '%'
+        return str(self.confidence * 100) + '%'
+
+###############################################################################
+#Runs a command line version of the answerer for testing purposes
+
+def main():
+    from ast import literal_eval as ast_eval
+    nlp = Question.create_nlp()
+    while True:
+        try:
+            question_text = ast_eval(input('Question: '))
+            possible_answers = ast_eval(input('Choices: '))
+
+            if question_text == 'q':
+                break
+
+            question = Question(question_text, possible_answers, nlp=nlp)
+            print(question.answer(close=False))
+
+        except RuntimeError as err:
+            nlp.close()
+            raise err
+    nlp.close()
+
+if __name__ == '__main__': main()
+        
