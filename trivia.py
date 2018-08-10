@@ -2,7 +2,9 @@ import nltk
 import time
 import json
 import requests
+import threading
 from bs4 import BeautifulSoup
+from bs4.element import Comment
 from secrets import CX, API
 
 #remember to add in augmented questions
@@ -63,8 +65,18 @@ class Question(object):
         self._analyze_text(self.splash_text)
 
     def _analyze_link(self, link:str):
-        page = self._make_request(link)
-        text = self._get_text(page)
+        ret = []
+        request_process = threading.Thread(target=self._make_request_thread, args=(link, ret))
+
+        request_process.start()
+        request_process.join(1)
+
+        if request_process.is_alive():
+            print('Skipping iteration', self._iteration)
+            return
+
+        page = ret[0]
+        text = self._get_text(page.content)
         self._analyze_text(text)
 
     def _analyze_text(self, text:str):
@@ -104,14 +116,17 @@ class Question(object):
 ##################################################################################
 #Natural language processing
 
-    def _assign_count(self, text: str, phrase: str) -> int:       
+    def _assign_count(self, text: str, phrase: str) -> int:  
         sentences = nltk.sent_tokenize(text)
         phrase_count = 0
        
         for sentence in sentences:
-            phrase_count += sentence.count(phrase)
-            if self.root_verb in sentence:
-                phrase_count *= self.RVF
+            occurences = sentence.count(phrase)
+            if occurences > 0 and self.root_verb in sentence:
+                phrase_count += self.RVF * occurences
+                print(sentence)
+            else:
+                phrase_count += occurences
         
         if self.is_negated: phrase_count *= -1
         return phrase_count
@@ -155,9 +170,9 @@ class Question(object):
             if i == len(dependency_tree): 
                 raise IndexError('No root node was found in dependency tree.')
         
-        root_node_pos = dependency_tree[i][2] #this is 1-index based
-        root_verb = self.stanford_nlp.word_tokenize(sentence)[root_node_pos-1]
-        return (root_verb, root_node_pos, dependency_tree)
+        root_pos = dependency_tree[i][2] #this is 1-index based
+        root = self.stanford_nlp.word_tokenize(sentence)[root_pos-1]
+        return (root, root_pos, dependency_tree)
 
 ##################################################################################
 #helper functions
@@ -173,7 +188,7 @@ class Question(object):
         json_data = json.loads(page.content)
 
         links = [item['link'] for item in json_data['items']]
-        text = ''.join([
+        text = u''.join([
             item['title'] + item ['htmlTitle'] + item['snippet'] + item['htmlSnippet']
             for item in json_data['items']
         ])       
@@ -182,14 +197,18 @@ class Question(object):
     def _make_request(self, url:str, params:dict = {}):
         return requests.get(url, params=params, headers=self._headers)
 
-    def _get_text(self, page):
-        soup = BeautifulSoup(page.content, features='html.parser')
-        if not soup: return ''
-        text = soup.get_text()
-        if not text: return ''
-        text.replace('\n', ' ')
-        self.all_text += text
-        return text
+    def _make_request_thread(self, url:str, ret_list: list, params:dict = {}):
+        try:
+            ret_list.append(requests.get(url, params=params, headers=self._headers))
+        except ConnectionError:
+            print('Connection error for:', url)
+
+    def _get_text(self, body):
+        #This method and '_tag_visible' written by stack overflow user 'jbochi'
+        soup = BeautifulSoup(body, 'html.parser')
+        texts = soup.findAll(text=True)
+        visible_texts = filter(self._tag_visible, texts)  
+        return u" ".join(t.strip() for t in visible_texts)
 
     def _clean_choices(self, choices: list) -> list:
         for i in range(len(choices)):
@@ -202,6 +221,14 @@ class Question(object):
             'cx':self._cx,
             'key':self._api
         } 
+    
+    @staticmethod
+    def _tag_visible(element):
+        if element.parent.name in ['style', 'script', 'head', 'title', 'meta', '[document]']:
+            return False
+        if isinstance(element, Comment):
+            return False
+        return True
     
     @staticmethod
     def create_nlp():
