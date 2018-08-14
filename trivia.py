@@ -21,16 +21,11 @@ class Question(object):
         self.start_time = time.time()
         
         if not nlp:
-            #You should always remember to call nlp.close() if you call __init__ but 
-            #do not call self.answer(), otherwise, the nlp server will continue to run
-            #Also, not providing nlp will cause _get_root_verb to run too slowly the first
-            #time, so in practice nlp should always be instantiated and tested before
-            #using the answerer to ensure answers within the time limit
             self.stanford_nlp = self.create_nlp()
         else:
             self.stanford_nlp = nlp
 
-        self.question = question
+        self.question = question.lower()
         self.root_verb, self.is_negated = self._get_root_verb(question)
         self.choices = self._clean_choices(choices)
         self.search_phrases: dict = self._to_search()
@@ -75,7 +70,11 @@ class Question(object):
             print('Skipping iteration', self._iteration)
             return
 
-        page = ret[0]
+        if len(ret) > 0:
+            page = ret[0]
+        else:
+            return
+
         text = self._get_text(page.content)
         self._analyze_text(text)
 
@@ -121,10 +120,9 @@ class Question(object):
         phrase_count = 0
        
         for sentence in sentences:
-            occurences = sentence.count(phrase)
+            occurences = sentence.count(" " + phrase + " ")
             if occurences > 0 and self.root_verb in sentence:
                 phrase_count += self.RVF * occurences
-                print(sentence)
             else:
                 phrase_count += occurences
         
@@ -149,12 +147,14 @@ class Question(object):
         for phrase in self.choices:
             valids.append((phrase, phrase))
             if len(phrase.split()) > 1:
-                #tokenized_phrase = nltk.pos_tag(nltk.word_tokenize(phrase))
-                #valids.extend([(token, phrase) for token, tag in tokenized_phrase
-                #                if tag[:2] == 'NN' and token != phrase])
                 root, _, _ = self._get_root_helper(phrase)
                 if root != phrase:
-                    valids.append((root, phrase))
+                    root_not_in_choices = True
+                    for choice in self.choices:
+                        if root in choice:
+                            root_not_in_choices = False
+                    if root_not_in_choices:
+                        valids.append((root, phrase))
         return dict(valids)
     
     def _modified_question(self) -> str:
@@ -270,8 +270,16 @@ def main():
 
         except RuntimeError as err:
             nlp.close()
+            print ("Error: Closing nlp server.")
             raise err
     nlp.close()
 
 if __name__ == '__main__': main()
-        
+
+
+#Figure out better way of generating search terms
+#Figure out how to incorporate search terms in question
+#Figure out why it freezes sometimes
+#Clean input properly
+#Do better evaluation of confidence
+#Use opentdb.com/api.php?amount=k to generate test questions
